@@ -2,25 +2,10 @@ import streamlit as st
 import pandas as pd
 import os
 import re
-import sys
 
-
-# ==================== 获取程序所在目录（支持打包后运行）====================
-def get_base_dir():
-    """获取程序所在目录（支持PyInstaller打包）"""
-    if getattr(sys, 'frozen', False):
-        # 打包后的exe
-        return os.path.dirname(sys.executable)
-    else:
-        # 开发环境
-        return os.path.dirname(os.path.abspath(__file__))
-
-
-BASE_DIR = get_base_dir()
-
-# ==================== 图片目录配置 ====================
-IMAGE_DIR = os.path.join(BASE_DIR, "images")
-EXCEL_PATH = os.path.join(BASE_DIR, "题库整理.xlsx")
+# ==================== 图片目录配置（使用相对路径）====================
+IMAGE_DIR = "images"
+EXCEL_FILE = "题库整理.xlsx"
 
 # ==================== 页面配置 ====================
 st.set_page_config(
@@ -63,21 +48,17 @@ def normalize_type(type_name):
 @st.cache_data
 def load_questions():
     try:
-        # 检查Excel文件是否存在
-        if not os.path.exists(EXCEL_PATH):
-            st.error(f"❌ 未找到题库文件！")
-            st.info(f"请确保以下文件存在：{EXCEL_PATH}")
+        if not os.path.exists(EXCEL_FILE):
+            st.error(f"❌ 未找到题库文件：{EXCEL_FILE}")
             return []
 
-        df = pd.read_excel(EXCEL_PATH)
+        df = pd.read_excel(EXCEL_FILE)
 
         questions = []
-        skipped_count = 0
 
         for index, row in df.iterrows():
             question_id = row["题号"]
             if pd.isna(question_id):
-                skipped_count += 1
                 continue
 
             raw_type = str(row["题型"]).strip() if pd.notna(row["题型"]) else ""
@@ -85,7 +66,6 @@ def load_questions():
 
             question_text = row["题目"] if pd.notna(row["题目"]) else ""
             if not question_text:
-                skipped_count += 1
                 continue
 
             explain_raw = row["纠正/解析"] if pd.notna(row["纠正/解析"]) else "暂无解析"
@@ -99,13 +79,10 @@ def load_questions():
                 option_letters = ["A", "B"]
                 if answer_raw == "对":
                     answer_letters = ["A"]
-                    answer_display = "对"
                 elif answer_raw == "错":
                     answer_letters = ["B"]
-                    answer_display = "错"
                 else:
                     answer_letters = [answer_raw] if answer_raw in ["A", "B"] else []
-                    answer_display = answer_raw
             else:
                 for opt in ["选项A", "选项B", "选项C", "选项D", "选项E", "选项F"]:
                     if opt in df.columns:
@@ -117,11 +94,9 @@ def load_questions():
                                 option_letters.append(opt[-1])
 
                 if not options:
-                    skipped_count += 1
                     continue
 
                 answer_letters = []
-                answer_display = answer_raw
                 for ch in answer_raw.upper():
                     if ch in option_letters:
                         answer_letters.append(ch)
@@ -133,8 +108,7 @@ def load_questions():
                 "options": options,
                 "option_letters": option_letters,
                 "answer_letters": answer_letters,
-                "answer_display": answer_display,
-                "explain": str(explain_raw) if explain_raw != "暂无解析" else "暂无解析"
+                "explain": str(explain_raw)
             })
 
         if questions:
@@ -186,6 +160,7 @@ def init_session():
     if "show_wrong_only" not in st.session_state:
         st.session_state.show_wrong_only = False
 
+
 # ==================== 应用筛选 ====================
 def apply_filter():
     if st.session_state.filter_type == "全部":
@@ -195,8 +170,6 @@ def apply_filter():
                                       q["type"] == st.session_state.filter_type]
 
     st.session_state.total = len(st.session_state.questions)
-    if st.session_state.total > 0:
-        st.session_state.quiz_order = list(range(st.session_state.total))
     st.session_state.current_index = 0
     st.session_state.score = 0
     st.session_state.answered = False
@@ -216,12 +189,11 @@ def get_current_question():
         return None
     else:
         if st.session_state.questions and st.session_state.current_index < st.session_state.total:
-            idx = st.session_state.quiz_order[st.session_state.current_index]
-            return st.session_state.questions[idx]
+            return st.session_state.questions[st.session_state.current_index]
         return None
 
 
-# ==================== 显示单选题（图片直接显示）====================
+# ==================== 显示单选题 ====================
 def display_single_choice(question, q_idx, disabled):
     options = question['options']
     option_letters = question['option_letters']
@@ -229,7 +201,6 @@ def display_single_choice(question, q_idx, disabled):
 
     selected_letter = None
 
-    # 每行显示2个选项
     num_options = len(options)
     cols_per_row = 2
 
@@ -243,23 +214,19 @@ def display_single_choice(question, q_idx, disabled):
             opt_text = options[opt_idx]
 
             with cols[col_idx]:
-                # 显示图片或文字
                 if is_image_file(opt_text):
                     img_path = get_image_path(opt_text)
                     if os.path.exists(img_path):
                         st.image(img_path, caption=f"选项 {letter}", use_container_width=True)
                     else:
-                        st.warning(f"图片不存在：{opt_text}")
                         st.write(f"{letter}. {opt_text}")
                 else:
                     st.write(f"{letter}. {opt_text}")
 
-                # 单选按钮
-                radio_key = f"single_{q_idx}_{letter}"
                 if st.radio(
                         "选择",
                         [letter],
-                        key=radio_key,
+                        key=f"single_{q_idx}_{letter}",
                         label_visibility="collapsed",
                         disabled=disabled,
                         index=None
@@ -269,7 +236,7 @@ def display_single_choice(question, q_idx, disabled):
     return selected_letter, option_dict
 
 
-# ==================== 显示多选题（图片直接显示）====================
+# ==================== 显示多选题 ====================
 def display_multiple_choice(question, q_idx, disabled):
     options = question['options']
     option_letters = question['option_letters']
@@ -296,7 +263,6 @@ def display_multiple_choice(question, q_idx, disabled):
                     if os.path.exists(img_path):
                         st.image(img_path, caption=f"选项 {letter}", use_container_width=True)
                     else:
-                        st.warning(f"图片不存在：{opt_text}")
                         st.write(f"{letter}. {opt_text}")
 
                     if st.checkbox(f"选择选项 {letter}", key=f"multi_{q_idx}_{letter}", disabled=disabled, value=False):
@@ -458,17 +424,13 @@ def handle_submit(q, option_dict):
         st.warning("请先选择答案")
         return False
 
-    # 获取正确答案
     correct_letters = q['answer_letters']
 
-    # 获取显示文字
     user_display = get_answer_display(user_letters, option_dict)
     correct_display = get_answer_display(correct_letters, option_dict)
 
-    # 判断对错
     is_correct = set(user_letters) == set(correct_letters)
 
-    # 记录本题结果
     st.session_state.question_results[st.session_state.current_index] = is_correct
 
     if is_correct:
@@ -479,7 +441,6 @@ def handle_submit(q, option_dict):
         st.session_state.result_correct = False
         st.session_state.result_message = f"回答错误！正确答案是：{correct_display}"
 
-        # 记录错题
         already_recorded = False
         for w in st.session_state.wrong_questions:
             if w.get('question') == q['question']:
@@ -531,7 +492,6 @@ def main():
     if not st.session_state.get("all_questions"):
         st.stop()
 
-    # ==================== 侧边栏 ====================
     with st.sidebar:
         st.header("⚙️ 设置")
 
@@ -564,15 +524,12 @@ def main():
 
         show_question_list()
 
-    # ==================== 答题完成 ====================
     if st.session_state.quiz_completed:
         st.success("🎉 恭喜你完成了所有题目！")
-
         if st.session_state.total > 0:
             score_percent = st.session_state.score / st.session_state.total * 100
             st.metric("最终得分", f"{st.session_state.score} / {st.session_state.total} ({score_percent:.1f}%)")
             st.progress(st.session_state.score / st.session_state.total)
-
         if st.session_state.wrong_questions:
             st.warning(f"📖 你有 {len(st.session_state.wrong_questions)} 道错题需要复习")
             if st.button("📖 查看错题本"):
@@ -581,14 +538,12 @@ def main():
         else:
             st.balloons()
             st.success("完美！没有错题！")
-
         if st.button("🔄 重新练习"):
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
             st.rerun()
         return
 
-    # ==================== 答题主界面 ====================
     if st.session_state.total == 0:
         st.warning("当前筛选条件下没有题目，请切换题型")
         if st.button("显示全部题目"):
@@ -602,33 +557,29 @@ def main():
         st.error("出错了，无法获取题目")
         return
 
-    # 进度
     progress_value = st.session_state.current_index / st.session_state.total
     st.progress(progress_value)
     st.write(f"第 {st.session_state.current_index + 1} / {st.session_state.total} 题")
     st.caption(f"题型：{q['type']}")
 
-    # 题目
     st.markdown(f"### {q['question']}")
 
-    # 构建选项字典
     option_dict = {letter: opt for letter, opt in zip(q['option_letters'], q['options'])}
 
-    # 根据题型显示选项（未答题时才显示选项）
+    # 根据题型显示选项
     if not st.session_state.answered:
         if q['type'] == "单选题":
-            selected = display_single_choice(q, st.session_state.current_index, False)
-            if selected[0]:  # selected_letter
-                st.session_state.selected_answer = selected[0]
+            selected_letter, _ = display_single_choice(q, st.session_state.current_index, False)
+            if selected_letter:
+                st.session_state.selected_answer = selected_letter
         elif q['type'] == "多选题":
-            selected = display_multiple_choice(q, st.session_state.current_index, False)
-            st.session_state.selected_answer = selected[0]
-        else:  # 判断题
-            selected = display_judgment(q, st.session_state.current_index, False)
-            if selected[0]:  # selected_letter
-                st.session_state.selected_answer = selected[0]
+            selected_letters, _ = display_multiple_choice(q, st.session_state.current_index, False)
+            st.session_state.selected_answer = selected_letters
+        else:
+            selected_letter, _ = display_judgment(q, st.session_state.current_index, False)
+            if selected_letter:
+                st.session_state.selected_answer = selected_letter
     else:
-        # 已答题时显示禁用的选项
         if q['type'] == "单选题":
             display_single_choice(q, st.session_state.current_index, True)
         elif q['type'] == "多选题":
@@ -636,10 +587,8 @@ def main():
         else:
             display_judgment(q, st.session_state.current_index, True)
 
-    # 显示结果
     show_result()
 
-    # 提交按钮和下一题按钮
     col1, col2 = st.columns(2)
 
     with col1:
